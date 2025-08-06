@@ -75,7 +75,7 @@ python dat_creator.py --name "My Collection" --author "Mike and Ike" --game-dept
 
 ##  Loose‑file policy explained
 
-A `<dir>` may only own other `<dir>` or `<game>` elements; it can’t own <rom> directly. If the script finds a file at a depth where you were expecting a folder, it has to wrap that file in a `<game>` element—there’s no legal way around it in the spec.
+A `<dir>` may only own other `<dir>` or `<game>` elements; it can’t own a `<rom>` directly. If the script finds a file at a depth where you were expecting a folder, it has to wrap that file in a `<game>` element—there’s no legal way around it in the spec.
 
 In practice you have two options:
 
