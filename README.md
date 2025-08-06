@@ -4,7 +4,7 @@ Generate RomVault and clrmamepro compatible **DAT** files from any directory tre
 
 ---
 
-## Features
+##  Features
 
 - **Two‑line live UI** – always shows the file currently being hashed and a tqdm progress bar below it.
 - **Header templating** – supply `<name>`, `<description>`, `<category>`, `<version>`, `<date>`, `<author>`, `<comment>`, `<url>`, and `<romvault forcepacking>` from the CLI or interactively.
@@ -15,14 +15,14 @@ Generate RomVault and clrmamepro compatible **DAT** files from any directory tre
 
 ---
 
-## Requirements
+##  Requirements
 
 - Python 3.8 +
 - Optional: [`tqdm`](https://pypi.org/project/tqdm/) for a nicer progress bar (`pip install tqdm`)
 
 ---
 
-## Installation
+##  Installation
 
 ```bash
 # clone or download this repo
@@ -34,13 +34,13 @@ No further install step—just run the script.
 
 ---
 
-## Usage
+##  Usage
 
 ```bash
 python dat_creator.py [options] SOURCE_DIR OUTPUT.dat
 ```
 
-### Interactive mode (Quick start)
+###  Interactive mode (Quick start)
 
 Leave off any header flag (or use `--interactive`) and the script will prompt for missing values:
 
@@ -48,13 +48,13 @@ Leave off any header flag (or use `--interactive`) and the script will prompt fo
 python create_dat_twoline_live.py --interactive /mnt/roms My.dat
 ```
 
-### Non-Interactive (example)
+###  Non-Interactive (example)
 
 ```bash
 python dat_creator.py --name "My Collection" --author "Mike and Ike" --game-depth 2 --loose-files parent /mnt/stuff MyCollection.dat
 ```
 
-### Important options
+###  Important options
 
 | Flag                                      | Default       | Purpose                                                        |
 | ----------------------------------------- | ------------- | -------------------------------------------------------------- |
@@ -73,7 +73,7 @@ python dat_creator.py --name "My Collection" --author "Mike and Ike" --game-dept
 
 ---
 
-## Loose‑file policy explained
+##  Loose‑file policy explained
 
 A `<dir>` may only own other `<dir>` or `<game>` elements; it can’t own <rom> directly. If the script finds a file at a depth where you were expecting a folder, it has to wrap that file in a `<game>` element—there’s no legal way around it in the spec.
 
@@ -92,7 +92,7 @@ TLDR:
 - **parent** – All loose files are placed into a single `<game>` named after their parent directory, preserving the folder layout.
 ---
 
-## Live progress UI
+##  Live progress UI
 
 ```
 3.42 MiB | Guides/How‑To/Modding.pdf
