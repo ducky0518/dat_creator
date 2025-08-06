@@ -99,7 +99,7 @@ TLDR:
 Hashing ▏███████▍  65%| 812/1250 [00:41<00:22, 19.3 file/s]
 ```
 ---
-## Output structure
+##  Output structure
 
 ```xml
 <datafile>
