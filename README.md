@@ -45,7 +45,7 @@ python dat_creator.py [options] SOURCE_DIR OUTPUT.dat
 Leave off any header flag (or use `--interactive`) and the script will prompt for missing values:
 
 ```bash
-python create_dat_twoline_live.py --interactive /mnt/roms My.dat
+python dat_creator.py --interactive /mnt/roms My.dat
 ```
 
 ###  Non-Interactive (example)
