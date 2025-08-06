@@ -4,7 +4,7 @@ Generate RomVault and clrmamepro compatible **DAT** files from any directory tre
 
 ---
 
-\## Features
+## Features
 
 - **Two‑line live UI** – always shows the file currently being hashed and a tqdm progress bar below it.
 - **Header templating** – supply `<name>`, `<description>`, `<category>`, `<version>`, `<date>`, `<author>`, `<comment>`, `<url>`, and `<romvault forcepacking>` from the CLI or interactively.
