@@ -26,9 +26,8 @@ Generate RomVault and clrmamepro compatible **DAT** files from any directory tre
 
 ```bash
 # clone or download this repo
-cd /path/to/repo
-python -m venv .venv && source .venv/bin/activate  # optional virtual‑env
 pip install tqdm  # optional
+cd /path/to/repo # where you downloaded/copied the dat_creator.py
 ```
 
 No further install step—just run the script.
@@ -38,16 +37,13 @@ No further install step—just run the script.
 \## Usage
 
 ```bash
-python create_dat_twoline_live.py [options] SOURCE_DIR OUTPUT.dat
+python dat_creator.py [options] SOURCE_DIR OUTPUT.dat
 ```
 
 \### Quick start
 
 ```bash
-python create_dat_twoline_live.py \
-  --name "My Collection" --author "Nate" \
-  --game-depth 2 --loose-files parent \
-  /mnt/roms   MyCollection.dat
+python dat_creator.py --name "My Collection" --author "Mike and Ike" --game-depth 2 --loose-files parent /mnt/stuff MyCollection.dat
 ```
 
 \### Interactive mode
@@ -79,10 +75,17 @@ python create_dat_twoline_live.py --interactive /mnt/roms My.dat
 
 \## Loose‑file policy explained
 
-- **strip** – Each loose file becomes its own `<game>`; the extension is removed so RomVault can create a directory without clashing with the file.
-- **parent** – All loose files are placed into a single `<game>` named after their parent directory, preserving the folder layout.
+A <dir> may only own other <dir> or <game> elements; it can’t own <rom> directly. If the script finds a file at a depth where you were expecting a folder, it has to wrap that file in a <game> element—there’s no legal way around it in the spec.
 
----
+In practice you have two options:
+
+Option 1:
+(default) Strip the extension and use that as the game-folder.	You’ll see one extra level (“file name without extension”) under the category directory.
+
+Option 2:
+Group “loose” files into the parent folder’s game
+(i.e. make Category itself a game whenever it holds direct files)	All files in Category appear as ROMs inside a single set named Category. You still have a game wrapper, but you avoid one-game-per-file clutter.
+For this approach use the `--loose-files parent` flag
 
 \## Output structure
 
@@ -97,8 +100,8 @@ python create_dat_twoline_live.py --interactive /mnt/roms My.dat
 </datafile>
 ```
 
-Every `<rom>` is always inside a `<game>` by DAT specification.
-
+- **strip** – Each loose file becomes its own `<game>`; the extension is removed so RomVault can create a directory without clashing with the file.
+- **parent** – All loose files are placed into a single `<game>` named after their parent directory, preserving the folder layout.
 ---
 
 \## Live progress UI
