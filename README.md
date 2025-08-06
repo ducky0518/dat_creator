@@ -87,6 +87,18 @@ Group “loose” files into the parent folder’s game
 (i.e. make Category itself a game whenever it holds direct files)	All files in Category appear as ROMs inside a single set named Category. You still have a game wrapper, but you avoid one-game-per-file clutter.
 For this approach use the `--loose-files parent` flag
 
+TLDR:
+- **strip** – Each loose file becomes its own `<game>`; the extension is removed so RomVault can create a directory without clashing with the file.
+- **parent** – All loose files are placed into a single `<game>` named after their parent directory, preserving the folder layout.
+---
+
+\## Live progress UI
+
+```
+3.42 MiB | Guides/How‑To/Modding.pdf
+Hashing ▏███████▍  65%| 812/1250 [00:41<00:22, 19.3 file/s]
+```
+---
 \## Output structure
 
 ```xml
@@ -98,16 +110,5 @@ For this approach use the `--loose-files parent` flag
     </game>
   </dir>
 </datafile>
-```
-
-- **strip** – Each loose file becomes its own `<game>`; the extension is removed so RomVault can create a directory without clashing with the file.
-- **parent** – All loose files are placed into a single `<game>` named after their parent directory, preserving the folder layout.
----
-
-\## Live progress UI
-
-```
-3.42 MiB | Guides/How‑To/Modding.pdf
-Hashing ▏███████▍  65%| 812/1250 [00:41<00:22, 19.3 file/s]
 ```
 
