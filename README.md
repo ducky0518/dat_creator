@@ -40,18 +40,18 @@ No further install step—just run the script.
 python dat_creator.py [options] SOURCE_DIR OUTPUT.dat
 ```
 
-\### Quick start
-
-```bash
-python dat_creator.py --name "My Collection" --author "Mike and Ike" --game-depth 2 --loose-files parent /mnt/stuff MyCollection.dat
-```
-
-\### Interactive mode
+\### Interactive mode (Quick start)
 
 Leave off any header flag (or use `--interactive`) and the script will prompt for missing values:
 
 ```bash
 python create_dat_twoline_live.py --interactive /mnt/roms My.dat
+```
+
+\### Non-Interactive (example)
+
+```bash
+python dat_creator.py --name "My Collection" --author "Mike and Ike" --game-depth 2 --loose-files parent /mnt/stuff MyCollection.dat
 ```
 
 \### Important options
@@ -75,7 +75,7 @@ python create_dat_twoline_live.py --interactive /mnt/roms My.dat
 
 \## Loose‑file policy explained
 
-A <dir> may only own other <dir> or <game> elements; it can’t own <rom> directly. If the script finds a file at a depth where you were expecting a folder, it has to wrap that file in a <game> element—there’s no legal way around it in the spec.
+A `<dir>` may only own other `<dir>` or `<game>` elements; it can’t own <rom> directly. If the script finds a file at a depth where you were expecting a folder, it has to wrap that file in a `<game>` element—there’s no legal way around it in the spec.
 
 In practice you have two options:
 
