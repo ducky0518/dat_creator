@@ -49,18 +49,21 @@ Usage (easiest)
 """
 
 from __future__ import annotations
-import argparse, datetime, hashlib, os, sys, zlib, xml.etree.ElementTree as ET
+import argparse, datetime, hashlib, os, sys, time, zlib, xml.etree.ElementTree as ET
 from math import log2
+from collections import deque
 try:
     from shutil import get_terminal_size
-except ImportError:                                 # <3.3
+except ImportError:
     get_terminal_size = lambda _=None: os.terminal_size((80, 24))
 try:
     from tqdm import tqdm
 except ImportError:
-    tqdm = None
+    tqdm = None                              # fallback if tqdm not installed
 
-CHUNK = 1 << 16                                     # 64 KiB blocks
+CHUNK  = 1 << 16    # 64 KiB
+PING_S = 1.0        # UI ping interval while hashing
+WIN_S  = 30         # rolling-window length for ETA (seconds)
 
 
 # ───────────────────────── helpers ─────────────────────────
@@ -72,42 +75,26 @@ def fmt_size(b: int) -> str:
     return f"{b / (1 << (10 * e)):.2f} {units[e]}"
 
 
-def crc32(path: str) -> str:
-    crc = 0
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(CHUNK), b""):
-            crc = zlib.crc32(chunk, crc)
-    return f"{crc & 0xFFFFFFFF:08x}"
-
-
-def md5_sha1(path: str) -> tuple[str, str]:
-    m, s = hashlib.md5(), hashlib.sha1()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(CHUNK), b""):
-            m.update(chunk)
-            s.update(chunk)
-    return m.hexdigest(), s.hexdigest()
-
-
 def discover(root: str):
+    """Walk *root* once, returning (file list, total bytes)."""
     walker = os.walk(root)
     if tqdm:
-        walker = tqdm(walker, desc="Scanning", unit="dir", leave=False)
-    items = []
+        walker = tqdm(walker, desc="Scanning", unit=" directories", leave=False)
+    files, total = [], 0
     for d, ds, fs in walker:
-        ds.sort()
-        fs.sort()
+        ds.sort(); fs.sort()
         for f in fs:
-            abs_fp = os.path.join(d, f)
-            rel_fp = os.path.relpath(abs_fp, root).replace(os.sep, "/")
-            items.append((abs_fp, rel_fp, rel_fp.split("/")))
-    return items
+            abs_p = os.path.join(d, f)
+            rel_p = os.path.relpath(abs_p, root).replace(os.sep, "/")
+            files.append((abs_p, rel_p, rel_p.split("/")))
+            total += os.path.getsize(abs_p)
+    return files, total
 
 
-# ────────────────── header construction ──────────────────
-def build_header(parent: ET.Element, a: argparse.Namespace) -> None:
+# ───────────────────── header XML ─────────────────────
+def build_header(parent: ET.Element, a):
     h = ET.SubElement(parent, "header")
-    ordered = [
+    for tag, val in [
         ("name",        a.name),
         ("description", a.description),
         ("category",    a.category),
@@ -116,19 +103,36 @@ def build_header(parent: ET.Element, a: argparse.Namespace) -> None:
         ("author",      a.author),
         ("comment",     a.comment),
         ("url",         a.url),
-    ]
-    for tag, val in ordered:
+    ]:
         if val:
             ET.SubElement(h, tag).text = val
     if a.forcepacking:
         ET.SubElement(h, "romvault", forcepacking=a.forcepacking)
 
 
-# ───── build DAT + two-line live progress ─────
-def build_dat(items, root, out_path, a):
+# ───── hash a file with per-second ping ─────
+def hash_file(path, ping_cb):
+    size = os.path.getsize(path)
+    crc = 0
+    md5, sha1 = hashlib.md5(), hashlib.sha1()
+    last = time.monotonic()
+    with open(path, "rb") as f:
+        while chunk := f.read(CHUNK):
+            crc = zlib.crc32(chunk, crc)
+            md5.update(chunk)
+            sha1.update(chunk)
+            now = time.monotonic()
+            if now - last >= PING_S:
+                ping_cb()
+                last = now
+    return size, f"{crc & 0xFFFFFFFF:08x}", md5.hexdigest(), sha1.hexdigest()
+
+
+# ─────────────── build DAT + live UI ───────────────
+def build_dat(items, root, out_path, a, total_bytes):
     cols = get_terminal_size((80, 24)).columns
 
-    # tqdm bars
+    # ── initialise progress bars ──
     if tqdm:
         header = tqdm(total=0, position=0, bar_format="{desc}", leave=False)
         bar = tqdm(
@@ -139,154 +143,161 @@ def build_dat(items, root, out_path, a):
             position=1,
             leave=False,
             dynamic_ncols=True,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}{postfix}]",
         )
     else:
         header = None
         bar = items
 
-    # XML skeleton
+    # ── build XML scaffold ──
     root_el = ET.Element("datafile")
     build_header(root_el, a)
-
     g_global = (
         ET.SubElement(root_el, "game", name=a.name or "DAT")
         if a.game_depth == 0
         else None
     )
-    dir_cache: dict[tuple[int, str], ET.Element] = {}
-    game_cache: dict[tuple[int, str], ET.Element] = {}
+    dir_cache, game_cache = {}, {}
 
-    processed = 0
-    for abs_fp, rel_fp, parts in bar:
-        # ── decide dir / game / rom names ────────────────────────────────
-        if a.game_depth == 0:
-            dir_parts, game_name, rom_name = [], a.name or "DAT", rel_fp
-        else:
-            dir_parts = parts[: max(a.game_depth - 1, 0)]
-            game_name = (
-                parts[a.game_depth - 1]
-                if len(parts) >= a.game_depth
-                else (a.name or "DAT")
-            )
-            rom_name = (
-                "/".join(parts[a.game_depth :])
-                if len(parts) > a.game_depth
-                else parts[-1]
-            )
-
-        # Handle loose-file policy
-        loose = game_name == rom_name
-        if loose:
-            if a.loose_files == "parent" and dir_parts:
-                # promote parent folder to game
-                game_name = dir_parts[-1]
-                dir_parts = dir_parts[:-1]
-            elif a.loose_files == "strip" and a.strip:
-                # keep previous behaviour: strip extension
-                game_name, _ = os.path.splitext(game_name)
-
-        # ── update header BEFORE hashing ────────────────────────────────
-        size = os.path.getsize(abs_fp)
-        size_str = fmt_size(size)
-        avail = cols - len(size_str) - 3
-        if avail < 1:
-            avail = 1
-        path_disp = rel_fp if len(rel_fp) <= avail else "…" + rel_fp[-(avail - 1) :]
-        line = f"{size_str} | {path_disp}"
-        if tqdm:
-            header.set_description_str(line, refresh=True)
-        else:
-            sys.stderr.write("\r" + line.ljust(cols))
-
-        # ── build / look-up dir hierarchy ───────────────────────────────
-        parent = root_el
-        for lvl, d in enumerate(dir_parts, 1):
-            key = (lvl, "/".join(parts[:lvl]))
-            if key not in dir_cache:
-                dir_cache[key] = ET.SubElement(parent, "dir", name=d)
-            parent = dir_cache[key]
-
-        # ── build / look-up game ────────────────────────────────────────
-        if a.game_depth == 0:
-            game_el = g_global
-        else:
-            g_key = (len(dir_parts), "/".join(dir_parts + [game_name]))
-            if g_key not in game_cache:
-                game_cache[g_key] = ET.SubElement(parent, "game", name=game_name)
-            game_el = game_cache[g_key]
-
-        # ── heavy hashing & ROM entry ───────────────────────────────────
-        crc = crc32(abs_fp)
-        md5, sha1 = md5_sha1(abs_fp)
-        ET.SubElement(
-            game_el,
-            "rom",
-            name=rom_name,
-            size=str(size),
-            crc=crc,
-            md5=md5,
-            sha1=sha1,
-        )
-
-        if not tqdm:
-            processed += 1
-            if processed % 1000 == 0:
-                print(f"\nHashed {processed:,} files …", file=sys.stderr, end="")
-
-    if not tqdm:
-        print(file=sys.stderr)
+    done_bytes = 0
+    window = deque()                      # (timestamp, bytes_done)
 
     try:
-        ET.indent(root_el, space="  ")
-    except AttributeError:
-        pass
-    ET.ElementTree(root_el).write(out_path, encoding="utf-8", xml_declaration=True)
+        for abs_fp, rel_fp, parts in bar:
+            # ── decide names ───────────────────────────────────────────────
+            if a.game_depth == 0:
+                dirs, game, rom = [], a.name or "DAT", rel_fp
+            else:
+                dirs = parts[: max(a.game_depth - 1, 0)]
+                game = (
+                    parts[a.game_depth - 1]
+                    if len(parts) >= a.game_depth
+                    else (a.name or "DAT")
+                )
+                rom = (
+                    "/".join(parts[a.game_depth :])
+                    if len(parts) > a.game_depth
+                    else parts[-1]
+                )
+
+            if game == rom:
+                if a.loose_files == "parent" and dirs:
+                    game = dirs[-1]; dirs = dirs[:-1]
+                elif a.loose_files == "strip" and a.strip:
+                    game, _ = os.path.splitext(game)
+
+            # ── update header BEFORE hashing ─────────────────────────────
+            size_str = fmt_size(os.path.getsize(abs_fp))
+            avail = cols - len(size_str) - 3
+            path_disp = rel_fp if len(rel_fp) <= avail else "…" + rel_fp[-(avail - 1) :]
+            line = f"{size_str} | {path_disp}"
+            if tqdm:
+                header.set_description_str(line, refresh=True)
+            else:
+                sys.stderr.write("\r" + line.ljust(cols))
+
+            # ── ping updates rolling ETA ─────────────────────────────────
+            def ping():
+                now = time.monotonic()
+                window.append((now, done_bytes))
+                while window and now - window[0][0] > WIN_S:
+                    window.popleft()
+                if len(window) > 1:
+                    span = now - window[0][0]
+                    delta = done_bytes - window[0][1]
+                    speed = delta / span if span else 0
+                    eta = (total_bytes - done_bytes) / speed if speed else 0
+                    if tqdm:
+                        bar.set_postfix(
+                            eta=time.strftime(
+                                "%H:%M:%S", time.gmtime(max(0, eta))
+                            ),
+                            refresh=False,
+                        )
+                if tqdm:
+                    bar.refresh(); header.refresh()
+                else:
+                    sys.stderr.write("\r" + line.ljust(cols))
+
+            # ── hash file ────────────────────────────────────────────────
+            size, crc, md5, sha1 = hash_file(abs_fp, ping)
+            done_bytes += size
+            ping()  # final update for this file
+
+            # ── XML dirs & game ──────────────────────────────────────────
+            parent = root_el
+            for lvl, d in enumerate(dirs, 1):
+                k = (lvl, "/".join(parts[:lvl]))
+                if k not in dir_cache:
+                    dir_cache[k] = ET.SubElement(parent, "dir", name=d)
+                parent = dir_cache[k]
+
+            if a.game_depth == 0:
+                game_el = g_global
+            else:
+                gk = (len(dirs), "/".join(dirs + [game]))
+                if gk not in game_cache:
+                    game_cache[gk] = ET.SubElement(parent, "game", name=game)
+                game_el = game_cache[gk]
+
+            ET.SubElement(
+                game_el,
+                "rom",
+                name=rom,
+                size=str(size),
+                crc=crc,
+                md5=md5,
+                sha1=sha1,
+            )
+
+    finally:
+        # ── always write what we have ────────────────────────────────────
+        if tqdm:
+            bar.close()
+            header.close()
+        else:
+            print(file=sys.stderr)
+
+        try:
+            ET.indent(root_el, space="  ")
+        except AttributeError:
+            pass
+        ET.ElementTree(root_el).write(
+            out_path, encoding="utf-8", xml_declaration=True
+        )
+        print(f"\nPartial (or complete) DAT written to {out_path}", file=sys.stderr)
 
 
-# ─────────────────────────── CLI ───────────────────────────
+# ─────────────── CLI / prompts ───────────────
 def parse_args():
     pa = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-
-    # positional
     pa.add_argument("source")
     pa.add_argument("output")
-    pa.add_argument("name", nargs="?", help="<header><name> (optional)")
-
-    # header flags
-    pa.add_argument("--interactive", action="store_true", help="Prompt for any header fields not supplied by flags.")
-    pa.add_argument("--name")
-    pa.add_argument("--description")
-    pa.add_argument("--category")
-    pa.add_argument("--version")
-    pa.add_argument("--date")
-    pa.add_argument("--author")
-    pa.add_argument("--comment")
-    pa.add_argument("--url")
-    pa.add_argument(
-        "--forcepacking",
-        choices=["fileonly", "archive", "split"],
-        help='<romvault forcepacking="…">',
-    )
-
-    # behaviour flags
+    pa.add_argument("name", nargs="?")
+    pa.add_argument("--interactive", action="store_true")
+    for fld in (
+        "name",
+        "description",
+        "category",
+        "version",
+        "date",
+        "author",
+        "comment",
+        "url",
+    ):
+        pa.add_argument(f"--{fld}")
+    pa.add_argument("--forcepacking", choices=["fileonly", "archive", "split"])
     pa.add_argument("--game-depth", type=int, default=1, metavar="N")
-    pa.add_argument(
-        "--loose-files",
-        choices=["strip", "parent"],
-        default="strip",
-        help="How to handle loose files that aren’t in a sub-folder.",
-    )
+    pa.add_argument("--loose-files", choices=["strip", "parent"], default="strip")
     grp = pa.add_mutually_exclusive_group()
     grp.add_argument("--strip-ext", dest="strip", action="store_true", default=True)
     grp.add_argument("--no-strip-ext", dest="strip", action="store_false")
-
     return pa.parse_args()
 
 
-# ─────────── interactive prompts for missing header fields ───────────
-def maybe_prompt(a: argparse.Namespace) -> None:
+def maybe_prompt(a):
     if not a.interactive:
         return
 
@@ -295,17 +306,22 @@ def maybe_prompt(a: argparse.Namespace) -> None:
             val = input(f"{prompt}: ").strip()
             setattr(a, attr, val or None)
 
-    ask("name", "DAT name")
-    ask("description", "Description")
-    ask("category", "Category")
-    ask("version", "Version")
-    ask("date", "Date (YYYY-MM-DD, blank = today)")
-    ask("author", "Author")
-    ask("comment", "Comment")
-    ask("url", "URL")
+    for attr, prompt in [
+        ("name", "DAT name"),
+        ("description", "Description"),
+        ("category", "Category"),
+        ("version", "Version"),
+        ("date", "Date (YYYY-MM-DD, blank=today)"),
+        ("author", "Author"),
+        ("comment", "Comment"),
+        ("url", "URL"),
+    ]:
+        ask(attr, prompt)
 
     if a.forcepacking is None:
-        fp = input("RomVault forcepacking (fileonly/archive/split, blank = none): ").strip().lower()
+        fp = input(
+            "RomVault forcepacking (fileonly/archive/split, blank = none): "
+        ).strip().lower()
         a.forcepacking = fp if fp else None
 
     if not a.date:
@@ -317,12 +333,16 @@ def main():
     a = parse_args()
     maybe_prompt(a)
 
-    files = discover(a.source)
-    total = sum(os.path.getsize(f[0]) for f in files)
-    print(f"Found {len(files):,} files ({fmt_size(total)}) – hashing …", file=sys.stderr)
+    files, total_bytes = discover(a.source)
+    print(
+        f"Found {len(files):,} files ({fmt_size(total_bytes)}) – hashing …",
+        file=sys.stderr,
+    )
 
-    build_dat(files, a.source, a.output, a)
-    print(f"Wrote {a.output}")
+    try:
+        build_dat(files, a.source, a.output, a, total_bytes)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user.", file=sys.stderr)
 
 
 if __name__ == "__main__":
